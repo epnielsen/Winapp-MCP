@@ -1,0 +1,39 @@
+# Visual Studio / .NET
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build outputs
+bin/
+obj/
+Debug/
+Release/
+**/bin/
+**/obj/
+
+# Rider
+.idea/
+
+# VS Code
+.vscode/
+
+# NuGet
+*.nupkg
+packages/
+project.lock.json
+project.fragment.lock.json
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs and caches
+*.log
+*.cache
+
+# Temporary
+*.tmp
+*.temp

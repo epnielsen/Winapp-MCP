@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "winapp-mcp": {
+      "command": "dotnet",
+      "args": [
+        "run",
+        "--project",
+        "C:\\dev\\Winapp-MCP\\WinApp-MCP\\WinApp-MCP.csproj"
+      ]
+    }
+  }
+}
