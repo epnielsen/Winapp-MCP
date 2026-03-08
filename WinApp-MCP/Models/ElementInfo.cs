@@ -1,5 +1,6 @@
 using System.Drawing;
 using FlaUI.Core.AutomationElements;
+using WinAppMCP.Services;
 
 namespace WinAppMCP.Models;
 
@@ -48,12 +49,12 @@ public sealed class ElementInfo
 
         return new ElementInfo
         {
-            AutomationId = element.AutomationId ?? string.Empty,
-            Name = element.Name ?? string.Empty,
-            ControlType = element.ControlType.ToString(),
-            ClassName = element.ClassName ?? string.Empty,
-            IsEnabled = element.IsEnabled,
-            IsOffscreen = element.IsOffscreen,
+            AutomationId = SafeUIA.SafeGetAutomationId(element),
+            Name = SafeUIA.SafeGetName(element),
+            ControlType = SafeUIA.SafeGetControlType(element),
+            ClassName = SafeUIA.SafeGetClassName(element),
+            IsEnabled = SafeUIA.SafeGetIsEnabled(element),
+            IsOffscreen = SafeUIA.SafeGetIsOffscreen(element),
             Bounds = bounds,
             SupportedPatterns = patterns
         };

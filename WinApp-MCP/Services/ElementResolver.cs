@@ -1,7 +1,9 @@
+using System.Runtime.InteropServices;
 using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Definitions;
 using FlaUI.Core.Tools;
 using Microsoft.Extensions.Logging;
+using WinAppMCP.Models;
 
 namespace WinAppMCP.Services;
 
@@ -9,9 +11,13 @@ namespace WinAppMCP.Services;
 /// Resolves UI elements within a window using a priority cascade:
 /// AutomationId > XPath > Name+ControlType.
 /// Wraps lookups in a short retry for dynamically loaded UI.
+/// Absorbs transient COM/provider failures with re-resolution.
 /// </summary>
 public sealed class ElementResolver
 {
+    private const int MaxTransientRetries = 3;
+    private static readonly TimeSpan TransientRetryDelay = TimeSpan.FromMilliseconds(300);
+
     private readonly ILogger<ElementResolver> _logger;
 
     public ElementResolver(ILogger<ElementResolver> logger)
@@ -21,6 +27,7 @@ public sealed class ElementResolver
 
     /// <summary>
     /// Find a single element using the priority cascade.
+    /// Retries on transient COM failures with element re-resolution.
     /// </summary>
     public AutomationElement? FindElement(
         AutomationElement root,
@@ -71,6 +78,7 @@ public sealed class ElementResolver
 
     /// <summary>
     /// Find all matching elements (max 50).
+    /// Supports search by controlType alone. Filters by visible/enabled if requested.
     /// </summary>
     public IReadOnlyList<AutomationElement> FindElements(
         AutomationElement root,
@@ -78,7 +86,9 @@ public sealed class ElementResolver
         string? name = null,
         string? controlType = null,
         string? xpath = null,
-        int maxResults = 50)
+        int maxResults = 50,
+        bool visibleOnly = false,
+        bool enabledOnly = false)
     {
         AutomationElement[] results = [];
 
@@ -88,7 +98,6 @@ public sealed class ElementResolver
         }
         else if (!string.IsNullOrWhiteSpace(xpath))
         {
-            // XPath returns single match; use FindAllByXPath if available, else wrap
             var single = root.FindFirstByXPath(xpath);
             results = single != null ? [single] : [];
         }
@@ -108,7 +117,15 @@ public sealed class ElementResolver
             }
         }
 
-        return results.Take(maxResults).ToArray();
+        IEnumerable<AutomationElement> filtered = results;
+
+        if (visibleOnly)
+            filtered = filtered.Where(e => !SafeUIA.SafeGetIsOffscreen(e, defaultValue: true));
+
+        if (enabledOnly)
+            filtered = filtered.Where(e => SafeUIA.SafeGetIsEnabled(e, defaultValue: false));
+
+        return filtered.Take(maxResults).ToArray();
     }
 
     /// <summary>
@@ -125,16 +142,35 @@ public sealed class ElementResolver
         return parts.Count > 0 ? string.Join(", ", parts) : "(no search criteria)";
     }
 
-    private static AutomationElement? RetryFind(
+    /// <summary>
+    /// Retry element lookup with transient COM failure recovery.
+    /// On COMException (e.g. E_UNEXPECTED), sleeps and retries from the root.
+    /// </summary>
+    private AutomationElement? RetryFind(
         AutomationElement root,
         Func<AutomationElement, AutomationElement?> finder)
     {
-        var result = Retry.WhileNull(
-            () => finder(root),
-            timeout: TimeSpan.FromSeconds(2),
-            interval: TimeSpan.FromMilliseconds(250));
+        for (int attempt = 0; attempt <= MaxTransientRetries; attempt++)
+        {
+            try
+            {
+                var result = Retry.WhileNull(
+                    () => finder(root),
+                    timeout: TimeSpan.FromSeconds(2),
+                    interval: TimeSpan.FromMilliseconds(250));
 
-        return result.Result;
+                return result.Result;
+            }
+            catch (COMException ex) when (attempt < MaxTransientRetries)
+            {
+                _logger.LogDebug(ex,
+                    "Transient COM failure during element search (attempt {Attempt}/{Max}), retrying...",
+                    attempt + 1, MaxTransientRetries);
+                Thread.Sleep(TransientRetryDelay);
+            }
+        }
+
+        return null;
     }
 
     private static bool TryParseControlType(string value, out ControlType controlType)

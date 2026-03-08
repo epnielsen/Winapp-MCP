@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using FlaUI.Core.AutomationElements;
+using FlaUI.Core.Definitions;
 using FlaUI.Core.Input;
 using FlaUI.Core.WindowsAPI;
 using ModelContextProtocol.Server;
@@ -216,7 +217,8 @@ public static class InteractionTools
     }
 
     [McpServerTool(Name = "select_item"), Description(
-        "Select an item in a ComboBox or ListBox by text value or index.")]
+        "Select an item in a ComboBox or ListBox by text value or index. " +
+        "Uses a multi-strategy fallback chain for value matching when provider does not expose Name.")]
     public static string SelectItem(
         FlaUIService flaUI,
         ElementResolver resolver,
@@ -243,39 +245,152 @@ public static class InteractionTools
 
                 window.SetForeground();
 
-                var comboBox = element.AsComboBox();
-                if (comboBox != null)
+                // Expand ComboBox if collapsed
+                bool wasExpanded = false;
+                if (element.Patterns.ExpandCollapse.IsSupported)
                 {
-                    if (!string.IsNullOrWhiteSpace(value))
-                        comboBox.Select(value);
-                    else if (index.HasValue)
-                        comboBox.Select(index.Value);
-
-                    Wait.UntilInputIsProcessed();
-                    var selected = comboBox.SelectedItem?.Text ?? "(none)";
-                    return $"Selected '{selected}' in: {ElementInfo.FromElement(element).ToCompactString()}";
+                    var state = element.Patterns.ExpandCollapse.Pattern.ExpandCollapseState.ValueOrDefault;
+                    if (state == ExpandCollapseState.Collapsed)
+                    {
+                        element.Patterns.ExpandCollapse.Pattern.Expand();
+                        Wait.UntilInputIsProcessed();
+                        Thread.Sleep(100); // allow items to load
+                        wasExpanded = true;
+                    }
                 }
 
-                var listBox = element.AsListBox();
-                if (listBox != null)
+                try
                 {
-                    if (!string.IsNullOrWhiteSpace(value))
-                        listBox.Select(value);
-                    else if (index.HasValue)
-                        listBox.Select(index.Value);
+                    // Get items from the container
+                    AutomationElement[] items;
+                    var comboBox = element.AsComboBox();
+                    var listBox = element.AsListBox();
 
-                    Wait.UntilInputIsProcessed();
-                    var selected = listBox.SelectedItem?.Text ?? "(none)";
-                    return $"Selected '{selected}' in: {ElementInfo.FromElement(element).ToCompactString()}";
+                    if (comboBox != null)
+                        items = comboBox.Items.Select(i => (AutomationElement)i).ToArray();
+                    else if (listBox != null)
+                        items = listBox.Items.Select(i => (AutomationElement)i).ToArray();
+                    else
+                        return $"Error: Element is not a ComboBox or ListBox. {ElementInfo.FromElement(element).ToCompactString()}";
+
+                    if (index.HasValue)
+                    {
+                        return SelectByIndex(items, index.Value, element);
+                    }
+                    else
+                    {
+                        return SelectByValue(items, value!, element);
+                    }
                 }
-
-                return $"Error: Element is not a ComboBox or ListBox. {ElementInfo.FromElement(element).ToCompactString()}";
+                finally
+                {
+                    // Collapse if we expanded it
+                    if (wasExpanded)
+                    {
+                        try
+                        {
+                            element.Patterns.ExpandCollapse.Pattern.Collapse();
+                            Wait.UntilInputIsProcessed();
+                        }
+                        catch { /* best effort */ }
+                    }
+                }
             }
             catch (Exception ex)
             {
-                return $"Error: {ex.Message}";
+                var category = ToolResult.Classify(ex);
+                return $"Error [{category}]: {ex.Message}";
             }
         }).Result;
+    }
+
+    private static string SelectByIndex(AutomationElement[] items, int index, AutomationElement container)
+    {
+        if (index < 0 || index >= items.Length)
+            return $"Error: Index {index} out of range. Item count: {items.Length}.";
+
+        var item = items[index];
+
+        // Scroll into view if virtualized
+        try
+        {
+            if (item.Patterns.ScrollItem.IsSupported)
+                item.Patterns.ScrollItem.Pattern.ScrollIntoView();
+        }
+        catch { /* best effort */ }
+
+        // Select via SelectionItemPattern (does not require reading Name)
+        try
+        {
+            if (item.Patterns.SelectionItem.IsSupported)
+            {
+                item.Patterns.SelectionItem.Pattern.Select();
+                Wait.UntilInputIsProcessed();
+
+                var (text, source) = SafeUIA.ExtractText(item);
+                return $"Selected index {index} (text='{text}', source={source}) in: {ElementInfo.FromElement(container).ToCompactString()}";
+            }
+        }
+        catch { /* fall through to click */ }
+
+        // Fallback: click the item
+        item.Click();
+        Wait.UntilInputIsProcessed();
+
+        var (fallbackText, fallbackSource) = SafeUIA.ExtractText(item);
+        return $"Selected index {index} via click (text='{fallbackText}', source={fallbackSource}) in: {ElementInfo.FromElement(container).ToCompactString()}";
+    }
+
+    private static string SelectByValue(AutomationElement[] items, string value, AutomationElement container)
+    {
+        int unsupportedCount = 0;
+        string matchMethod = "None";
+
+        for (int i = 0; i < items.Length; i++)
+        {
+            var item = items[i];
+            var (text, source) = SafeUIA.ExtractText(item);
+
+            if (source == "None" || (text == SafeUIA.NotSupported))
+            {
+                unsupportedCount++;
+                continue;
+            }
+
+            if (string.Equals(text, value, StringComparison.OrdinalIgnoreCase))
+            {
+                matchMethod = source;
+
+                // Scroll into view if virtualized
+                try
+                {
+                    if (item.Patterns.ScrollItem.IsSupported)
+                        item.Patterns.ScrollItem.Pattern.ScrollIntoView();
+                }
+                catch { /* best effort */ }
+
+                // Select via SelectionItemPattern
+                try
+                {
+                    if (item.Patterns.SelectionItem.IsSupported)
+                    {
+                        item.Patterns.SelectionItem.Pattern.Select();
+                        Wait.UntilInputIsProcessed();
+                        return $"Selected '{value}' at index {i} (matchedVia={matchMethod}) in: {ElementInfo.FromElement(container).ToCompactString()}" +
+                               (unsupportedCount > 0 ? $" ({unsupportedCount} items had unsupported properties)" : "");
+                    }
+                }
+                catch { /* fall through to click */ }
+
+                // Fallback: click
+                item.Click();
+                Wait.UntilInputIsProcessed();
+                return $"Selected '{value}' at index {i} via click (matchedVia={matchMethod}) in: {ElementInfo.FromElement(container).ToCompactString()}" +
+                       (unsupportedCount > 0 ? $" ({unsupportedCount} items had unsupported properties)" : "");
+            }
+        }
+
+        return $"Error: No item matching '{value}' found. Searched {items.Length} items, {unsupportedCount} had unsupported text properties.";
     }
 
     [McpServerTool(Name = "send_keys"), Description(

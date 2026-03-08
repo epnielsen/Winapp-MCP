@@ -25,7 +25,7 @@ builder.Services
         options.ServerInfo = new()
         {
             Name = "WinApp-MCP",
-            Version = "1.0.0"
+            Version = "0.2.0"
         };
     })
     .WithStdioServerTransport()

@@ -163,8 +163,12 @@ public sealed class FlaUIService : IDisposable
 
     /// <summary>
     /// Serialize the UI tree of an element to a compact text format.
+    /// Profile controls how many properties are read per node:
+    ///   "minimal"    — ControlType + Name only (fastest, most reliable)
+    ///   "standard"   — + AutomationId + ClassName + enabled state (default)
+    ///   "diagnostic" — + SupportedPatterns + BoundingRectangle
     /// </summary>
-    public string SerializeTree(AutomationElement root, int maxDepth = 3, int currentDepth = 0)
+    public string SerializeTree(AutomationElement root, int maxDepth = 3, int currentDepth = 0, string profile = "standard")
     {
         if (currentDepth > maxDepth)
             return string.Empty;
@@ -172,26 +176,50 @@ public sealed class FlaUIService : IDisposable
         var sb = new StringBuilder();
         var indent = new string(' ', currentDepth * 2);
 
-        var controlType = root.ControlType.ToString();
-        var name = root.Name ?? string.Empty;
-        var automationId = root.AutomationId ?? string.Empty;
-        var className = root.ClassName ?? string.Empty;
-        var isEnabled = root.IsEnabled;
+        var controlType = SafeUIA.SafeGetControlType(root);
+        var name = SafeUIA.SafeGetName(root);
 
         // Build compact line
         var parts = new List<string> { $"{indent}[{controlType}]" };
 
-        if (!string.IsNullOrWhiteSpace(name))
+        if (!string.IsNullOrWhiteSpace(name) && name != SafeUIA.NotSupported)
             parts.Add($"\"{name}\"");
+        else if (name == SafeUIA.NotSupported)
+            parts.Add($"\"{SafeUIA.NotSupported}\"");
 
-        if (!string.IsNullOrWhiteSpace(automationId))
-            parts.Add($"id=\"{automationId}\"");
+        if (profile is "standard" or "diagnostic")
+        {
+            var automationId = SafeUIA.SafeGetAutomationId(root);
+            var className = SafeUIA.SafeGetClassName(root);
+            var isEnabled = SafeUIA.SafeGetIsEnabled(root);
 
-        if (!string.IsNullOrWhiteSpace(className))
-            parts.Add($"class=\"{className}\"");
+            if (!string.IsNullOrWhiteSpace(automationId) && automationId != SafeUIA.NotSupported)
+                parts.Add($"id=\"{automationId}\"");
 
-        if (!isEnabled)
-            parts.Add("(disabled)");
+            if (!string.IsNullOrWhiteSpace(className) && className != SafeUIA.NotSupported)
+                parts.Add($"class=\"{className}\"");
+
+            if (!isEnabled)
+                parts.Add("(disabled)");
+        }
+
+        if (profile == "diagnostic")
+        {
+            try
+            {
+                var supported = root.GetSupportedPatterns();
+                if (supported.Length > 0)
+                    parts.Add($"patterns=[{string.Join(",", supported.Select(p => p.Name))}]");
+            }
+            catch { /* skip patterns on failure */ }
+
+            try
+            {
+                var rect = root.BoundingRectangle;
+                parts.Add($"bounds=({(int)rect.X},{(int)rect.Y},{(int)rect.Width},{(int)rect.Height})");
+            }
+            catch { /* skip bounds on failure */ }
+        }
 
         sb.AppendLine(string.Join(" ", parts));
 
@@ -201,12 +229,21 @@ public sealed class FlaUIService : IDisposable
             var children = root.FindAllChildren();
             foreach (var child in children)
             {
-                sb.Append(SerializeTree(child, maxDepth, currentDepth + 1));
+                try
+                {
+                    sb.Append(SerializeTree(child, maxDepth, currentDepth + 1, profile));
+                }
+                catch (Exception childEx)
+                {
+                    var childIndent = new string(' ', (currentDepth + 1) * 2);
+                    sb.AppendLine($"{childIndent}[<Error>] \"Failed to inspect: {childEx.Message}\"");
+                }
             }
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Failed to enumerate children of element");
+            sb.AppendLine($"{indent}  [<Error>] \"Failed to enumerate children: {ex.Message}\"");
         }
 
         return sb.ToString();

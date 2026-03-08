@@ -1,6 +1,8 @@
 # WinApp-MCP
 
-An MCP (Model Context Protocol) server that gives AI coding agents "eyes" on Windows desktop applications using [FlaUI](https://github.com/FlaUI/FlaUI) and Windows UI Automation (UIA3).
+[![Version](https://img.shields.io/badge/version-0.2.0-blue)](#changelog)
+
+An MCP (Model Context Protocol) server that gives AI coding agents "eyes" and "hands" on Windows desktop applications using [FlaUI](https://github.com/FlaUI/FlaUI) and Windows UI Automation (UIA3).
 
 Works with any Windows application that exposes a standard UI Automation tree — including **WPF**, **WinForms**, **WinUI 3**, and **.NET MAUI** apps.
 
@@ -63,9 +65,18 @@ Or run the compiled binary directly:
 
 | Tool | Description |
 |---|---|
-| `get_window_tree` | Get the UI element tree in compact text format (configurable `maxDepth`) |
-| `find_elements` | Find elements by `automationId`, `name`, `controlType`, or `xpath` |
+| `get_window_tree` | Get the UI element tree in compact text format. Supports `maxDepth`, `rootAutomationId`, and `propertyProfile` (`minimal`, `standard`, `diagnostic`) |
+| `find_elements` | Find elements by `automationId`, `name`, `controlType`, or `xpath`. Supports `visibleOnly` and `enabledOnly` filters |
 | `get_element_properties` | Get detailed properties and supported UIA patterns for an element |
+| `get_selectable_items` | Enumerate items in a ComboBox/ListBox with safe, provider-tolerant metadata |
+
+### Text
+
+| Tool | Description |
+|---|---|
+| `get_visible_text` | Read all visible text from a window or subtree in reading order |
+| `get_element_text` | Read text/value from a specific element using a multi-strategy fallback chain |
+| `set_text` | Set text in a text-capable control via ValuePattern (keyboard fallback opt-in) |
 
 ### Interaction
 
@@ -75,7 +86,7 @@ Or run the compiled binary directly:
 | `invoke_element` | Invoke via UIA InvokePattern (no mouse, preferred for buttons) |
 | `type_text` | Type text into an input field (with optional clear-first) |
 | `toggle_element` | Toggle a CheckBox/ToggleButton |
-| `select_item` | Select item in ComboBox/ListBox by value or index |
+| `select_item` | Select item in ComboBox/ListBox by value or index. Uses multi-strategy fallback for providers with incomplete metadata |
 | `send_keys` | Send keyboard shortcuts (e.g., `Ctrl+A`, `Enter`, `Alt+F4`) |
 | `focus_element` | Focus an element / bring window to foreground |
 
@@ -114,7 +125,13 @@ Or run the compiled binary directly:
 7. wait_for_element(windowHandle: "1A2B3C", name: "Dashboard", timeoutMs: 5000)
    → Element found
 
-8. screenshot(windowHandle: "1A2B3C")
+8. get_visible_text(windowHandle: "1A2B3C")
+   → Found 3 text element(s):
+       [Name] Welcome back, admin
+       [Name] Dashboard
+       [ValuePattern] Last login: 2026-03-08
+
+9. screenshot(windowHandle: "1A2B3C")
    → [Screenshot captured: 1280x720px]
 ```
 
@@ -126,6 +143,16 @@ Elements can be found using (in priority order):
 2. **`xpath`** — Structural path like `//Button[@Name='OK']`. Good when AutomationId is missing.
 3. **`name` + `controlType`** — Display text + type combo. Useful for labeled controls.
 
+## Provider Tolerance
+
+WinApp-MCP is designed to work with real-world UI Automation providers that may expose incomplete or nonstandard properties:
+
+- **Unsupported properties** are caught per-element and reported as `<NotSupported>` instead of failing the operation.
+- **Tree inspection** continues past nodes that fail, emitting `[<Error>]` placeholders for uninspectable children.
+- **Item selection** uses a multi-strategy fallback chain (Name → ValuePattern → LegacyIAccessible → text descendants) when provider metadata is incomplete.
+- **Transient COM failures** (e.g. `E_UNEXPECTED`) are retried with element re-resolution.
+- **Error categorization** distinguishes `ElementNotFound`, `PropertyNotSupported`, `TransientProviderFailure`, and `OperationNotSupported` so agents can make informed decisions.
+
 ## Troubleshooting
 
 | Issue | Solution |
@@ -134,6 +161,9 @@ Elements can be found using (in priority order):
 | **Empty UI tree** | The app may use custom-drawn controls that don't expose UIA. Try `screenshot` instead. |
 | **Element not found** | Use `get_window_tree` with higher `maxDepth` to explore. Check AutomationId in the tree output. |
 | **Click doesn't work** | Try `invoke_element` instead (uses UIA pattern, no mouse). Some apps block programmatic mouse input. |
+| **Properties not supported** | Use `get_window_tree` with `propertyProfile: "minimal"` for maximum reliability, or `"diagnostic"` for full detail. |
+| **ComboBox selection fails** | Use `get_selectable_items` to diagnose which items are visible to UIA and what text sources are available. |
+| **Can't read validation text** | Use `get_visible_text` to read all visible text from the window or a subtree. |
 | **Screenshot fails** | Ensure the window is not minimized. The server needs a desktop session (not headless). |
 | **DPI/coordinate issues** | Ensure the process is DPI-aware. BoundingRectangle values are in physical pixels. |
 | **Logging to stdout breaks MCP** | All logging routes to stderr by default. Don't add `Console.WriteLine` calls. |
@@ -145,16 +175,24 @@ WinApp-MCP/
 ├── Program.cs                  # Host builder, DI, MCP server setup
 ├── Services/
 │   ├── FlaUIService.cs         # Singleton: UIA3Automation, window cache, tree serialization
-│   └── ElementResolver.cs     # Element lookup by AutomationId/XPath/Name+ControlType
+│   ├── ElementResolver.cs     # Element lookup with retry and transient failure recovery
+│   └── SafeUIA.cs             # Safe UIA property access and multi-strategy text extraction
 ├── Models/
-│   └── ElementInfo.cs          # Compact DTO for element properties
+│   ├── ElementInfo.cs          # Compact DTO for element properties
+│   ├── ErrorCategory.cs       # Error classification enum
+│   └── ToolResult.cs          # Structured tool result with error categorization
 └── Tools/
     ├── WindowTools.cs          # list_windows, attach_application, list_attached
-    ├── InspectionTools.cs      # get_window_tree, find_elements, get_element_properties
+    ├── InspectionTools.cs      # get_window_tree, find_elements, get_element_properties, get_selectable_items
     ├── InteractionTools.cs     # click, invoke, type_text, toggle, select, send_keys, focus
+    ├── TextTools.cs            # get_visible_text, get_element_text, set_text
     ├── CaptureTools.cs         # screenshot
     └── WaitTools.cs            # wait_for_element
 ```
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## License
 
