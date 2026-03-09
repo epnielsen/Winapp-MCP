@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-03-09
+
+### Added
+
+- **`get_child_controls`** tool — discover child controls within a composite parent element, classified by interaction type (`edit`, `button`, `toggle`, `picker`, `expander`, `label`, `other`). Enables composite-control aware discovery without full tree dumps.
+- **`rootAutomationId`** parameter on `find_elements` — scope element search to a subtree, matching existing `get_window_tree` behavior.
+- **`includeActions`** parameter on `get_selectable_items` — opt-in discovery of row-level action controls (buttons, toggles) within each list item.
+- **`rawProviderText`** and **`summaryParts`** fields in `get_selectable_items` response — always preserves raw provider text for diagnostics; provides individual visible text parts when descendant fallback was used.
+- **`RowAction`** model — metadata for actionable child controls within list rows.
+- **`SafeUIA.IsLikelyCLRTypeName()`** — heuristic detection of fully-qualified .NET type names (e.g. `Namespace.Model.ClassName`) in item text, enabling automatic visible-descendant fallback.
+- **`SafeUIA.ExtractVisibleSummary()`** — enhanced text extraction that falls back to visible descendant text when primary text is a CLR type name.
+- **`SafeUIA.DiscoverRowActions()`** — discovers actionable child controls (Invoke, Toggle, ExpandCollapse patterns) within a list row element.
+- **`SafeUIA.ClassifyInteractionType()`** — classifies elements by their primary interaction pattern.
+
+### Changed
+
+- **`get_selectable_items`** now uses `ExtractVisibleSummary` instead of `ExtractText` — templated list rows that previously surfaced only CLR type names now return user-visible text summaries assembled from visible descendants.
+- **`select_item` value matching** now also searches visible descendant text when item text is a CLR type name, improving match rates for templated lists.
+- **`select_item` diagnostics** now report counts of CLR-type-name items and visible-descendant fallbacks alongside unsupported property counts.
+
 ## [0.2.0] - 2026-03-08
 
 ### Added

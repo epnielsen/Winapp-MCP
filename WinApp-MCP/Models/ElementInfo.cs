@@ -1,4 +1,3 @@
-using System.Drawing;
 using FlaUI.Core.AutomationElements;
 using WinAppMCP.Services;
 

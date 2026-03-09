@@ -1,6 +1,6 @@
 # WinApp-MCP
 
-[![Version](https://img.shields.io/badge/version-0.2.0-blue)](#changelog)
+[![Version](https://img.shields.io/badge/version-0.3.0-blue)](#changelog)
 
 An MCP (Model Context Protocol) server that gives AI coding agents "eyes" and "hands" on Windows desktop applications using [FlaUI](https://github.com/FlaUI/FlaUI) and Windows UI Automation (UIA3).
 
@@ -66,9 +66,10 @@ Or run the compiled binary directly:
 | Tool | Description |
 |---|---|
 | `get_window_tree` | Get the UI element tree in compact text format. Supports `maxDepth`, `rootAutomationId`, and `propertyProfile` (`minimal`, `standard`, `diagnostic`) |
-| `find_elements` | Find elements by `automationId`, `name`, `controlType`, or `xpath`. Supports `visibleOnly` and `enabledOnly` filters |
+| `find_elements` | Find elements by `automationId`, `name`, `controlType`, or `xpath`. Supports `visibleOnly`, `enabledOnly` filters and `rootAutomationId` for subtree-scoped search |
 | `get_element_properties` | Get detailed properties and supported UIA patterns for an element |
-| `get_selectable_items` | Enumerate items in a ComboBox/ListBox with safe, provider-tolerant metadata |
+| `get_selectable_items` | Enumerate items in a ComboBox/ListBox with visible-text summaries, CLR-type-name detection, raw provider text, and optional row-level action discovery (`includeActions`) |
+| `get_child_controls` | Discover child controls within a composite parent, classified by interaction type (`edit`, `button`, `toggle`, `picker`, `expander`, `label`, `other`) |
 
 ### Text
 
@@ -150,6 +151,8 @@ WinApp-MCP is designed to work with real-world UI Automation providers that may 
 - **Unsupported properties** are caught per-element and reported as `<NotSupported>` instead of failing the operation.
 - **Tree inspection** continues past nodes that fail, emitting `[<Error>]` placeholders for uninspectable children.
 - **Item selection** uses a multi-strategy fallback chain (Name → ValuePattern → LegacyIAccessible → text descendants) when provider metadata is incomplete.
+- **Templated list rows** that return CLR type names (e.g. `Namespace.Model.ClassName`) instead of user-visible text are automatically resolved to visible descendant summaries.
+- **Composite controls** with weak parent metadata can be explored via `get_child_controls`, which classifies children by interaction type.
 - **Transient COM failures** (e.g. `E_UNEXPECTED`) are retried with element re-resolution.
 - **Error categorization** distinguishes `ElementNotFound`, `PropertyNotSupported`, `TransientProviderFailure`, and `OperationNotSupported` so agents can make informed decisions.
 
@@ -163,6 +166,8 @@ WinApp-MCP is designed to work with real-world UI Automation providers that may 
 | **Click doesn't work** | Try `invoke_element` instead (uses UIA pattern, no mouse). Some apps block programmatic mouse input. |
 | **Properties not supported** | Use `get_window_tree` with `propertyProfile: "minimal"` for maximum reliability, or `"diagnostic"` for full detail. |
 | **ComboBox selection fails** | Use `get_selectable_items` to diagnose which items are visible to UIA and what text sources are available. |
+| **List shows CLR type names** | Templated rows are auto-resolved to visible text. Check `rawProviderText` and `summaryParts` in `get_selectable_items` output. |
+| **Composite control is hard to interact with** | Use `get_child_controls` to discover actionable children classified by interaction type. |
 | **Can't read validation text** | Use `get_visible_text` to read all visible text from the window or a subtree. |
 | **Screenshot fails** | Ensure the window is not minimized. The server needs a desktop session (not headless). |
 | **DPI/coordinate issues** | Ensure the process is DPI-aware. BoundingRectangle values are in physical pixels. |
@@ -180,10 +185,11 @@ WinApp-MCP/
 ├── Models/
 │   ├── ElementInfo.cs          # Compact DTO for element properties
 │   ├── ErrorCategory.cs       # Error classification enum
+│   ├── RowAction.cs           # Row-level action metadata for list items
 │   └── ToolResult.cs          # Structured tool result with error categorization
 └── Tools/
     ├── WindowTools.cs          # list_windows, attach_application, list_attached
-    ├── InspectionTools.cs      # get_window_tree, find_elements, get_element_properties, get_selectable_items
+    ├── InspectionTools.cs      # get_window_tree, find_elements, get_element_properties, get_selectable_items, get_child_controls
     ├── InteractionTools.cs     # click, invoke, type_text, toggle, select, send_keys, focus
     ├── TextTools.cs            # get_visible_text, get_element_text, set_text
     ├── CaptureTools.cs         # screenshot

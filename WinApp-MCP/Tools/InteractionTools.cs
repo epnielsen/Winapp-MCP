@@ -344,6 +344,8 @@ public static class InteractionTools
     private static string SelectByValue(AutomationElement[] items, string value, AutomationElement container)
     {
         int unsupportedCount = 0;
+        int clrTypeNameCount = 0;
+        int visibleDescendantCount = 0;
         string matchMethod = "None";
 
         for (int i = 0; i < items.Length; i++)
@@ -357,7 +359,28 @@ public static class InteractionTools
                 continue;
             }
 
-            if (string.Equals(text, value, StringComparison.OrdinalIgnoreCase))
+            // Track CLR type names and visible descendant fallbacks
+            if (SafeUIA.IsLikelyCLRTypeName(text))
+                clrTypeNameCount++;
+            if (source == "TextDescendants")
+                visibleDescendantCount++;
+
+            // Try matching against primary text first
+            bool matched = string.Equals(text, value, StringComparison.OrdinalIgnoreCase);
+
+            // If primary text is a CLR type name, also try matching against visible descendants
+            if (!matched && SafeUIA.IsLikelyCLRTypeName(text))
+            {
+                var (summaryText, _, _, summarySource) = SafeUIA.ExtractVisibleSummary(item);
+                if (summarySource == "VisibleDescendants" && string.Equals(summaryText, value, StringComparison.OrdinalIgnoreCase))
+                {
+                    text = summaryText;
+                    source = summarySource;
+                    matched = true;
+                }
+            }
+
+            if (matched)
             {
                 matchMethod = source;
 
@@ -369,6 +392,8 @@ public static class InteractionTools
                 }
                 catch { /* best effort */ }
 
+                var diagnosticSuffix = BuildDiagnosticSuffix(unsupportedCount, clrTypeNameCount, visibleDescendantCount);
+
                 // Select via SelectionItemPattern
                 try
                 {
@@ -376,8 +401,7 @@ public static class InteractionTools
                     {
                         item.Patterns.SelectionItem.Pattern.Select();
                         Wait.UntilInputIsProcessed();
-                        return $"Selected '{value}' at index {i} (matchedVia={matchMethod}) in: {ElementInfo.FromElement(container).ToCompactString()}" +
-                               (unsupportedCount > 0 ? $" ({unsupportedCount} items had unsupported properties)" : "");
+                        return $"Selected '{value}' at index {i} (matchedVia={matchMethod}) in: {ElementInfo.FromElement(container).ToCompactString()}{diagnosticSuffix}";
                     }
                 }
                 catch { /* fall through to click */ }
@@ -385,12 +409,21 @@ public static class InteractionTools
                 // Fallback: click
                 item.Click();
                 Wait.UntilInputIsProcessed();
-                return $"Selected '{value}' at index {i} via click (matchedVia={matchMethod}) in: {ElementInfo.FromElement(container).ToCompactString()}" +
-                       (unsupportedCount > 0 ? $" ({unsupportedCount} items had unsupported properties)" : "");
+                return $"Selected '{value}' at index {i} via click (matchedVia={matchMethod}) in: {ElementInfo.FromElement(container).ToCompactString()}{diagnosticSuffix}";
             }
         }
 
-        return $"Error: No item matching '{value}' found. Searched {items.Length} items, {unsupportedCount} had unsupported text properties.";
+        var finalDiag = BuildDiagnosticSuffix(unsupportedCount, clrTypeNameCount, visibleDescendantCount);
+        return $"Error: No item matching '{value}' found. Searched {items.Length} items.{finalDiag}";
+    }
+
+    private static string BuildDiagnosticSuffix(int unsupported, int clrTypeNames, int visibleDescendants)
+    {
+        var parts = new List<string>();
+        if (unsupported > 0) parts.Add($"{unsupported} items had unsupported properties");
+        if (clrTypeNames > 0) parts.Add($"{clrTypeNames} items had CLR type name text");
+        if (visibleDescendants > 0) parts.Add($"{visibleDescendants} items used visible descendant fallback");
+        return parts.Count > 0 ? $" ({string.Join(", ", parts)})" : "";
     }
 
     [McpServerTool(Name = "send_keys"), Description(
