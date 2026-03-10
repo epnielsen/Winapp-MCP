@@ -1,6 +1,6 @@
 # WinApp-MCP
 
-[![Version](https://img.shields.io/badge/version-0.3.0-blue)](#changelog)
+[![Version](https://img.shields.io/badge/version-0.4.0-blue)](#changelog)
 
 An MCP (Model Context Protocol) server that gives AI coding agents "eyes" and "hands" on Windows desktop applications using [FlaUI](https://github.com/FlaUI/FlaUI) and Windows UI Automation (UIA3).
 
@@ -76,27 +76,28 @@ Or run the compiled binary directly:
 | Tool | Description |
 |---|---|
 | `get_visible_text` | Read all visible text from a window or subtree in reading order |
-| `get_element_text` | Read text/value from a specific element using a multi-strategy fallback chain |
-| `set_text` | Set text in a text-capable control via ValuePattern (keyboard fallback opt-in) |
+| `get_element_text` | Read text/value from a specific element using a multi-strategy fallback chain. Supports `rootAutomationId` |
+| `set_text` | Set text in a text-capable control via ValuePattern (keyboard fallback opt-in). Supports `rootAutomationId` |
 
 ### Interaction
 
 | Tool | Description |
 |---|---|
-| `click_element` | Click an element (left/right/double) |
-| `invoke_element` | Invoke via UIA InvokePattern (no mouse, preferred for buttons) |
-| `type_text` | Type text into an input field (with optional clear-first) |
-| `toggle_element` | Toggle a CheckBox/ToggleButton |
-| `select_item` | Select item in ComboBox/ListBox by value or index. Uses multi-strategy fallback for providers with incomplete metadata |
+| `click_element` | Click an element (left/right/double). Supports `rootAutomationId`. Reports ambiguity when multiple elements match |
+| `invoke_element` | Invoke via UIA InvokePattern (no mouse, preferred for buttons). Supports `rootAutomationId`. Reports ambiguity |
+| `type_text` | Type text into an input field (with optional clear-first). Supports `rootAutomationId` |
+| `toggle_element` | Toggle a CheckBox/ToggleButton. Supports `rootAutomationId` |
+| `select_item` | Select item in ComboBox/ListBox by value or index. Uses multi-strategy fallback. Supports `rootAutomationId` |
+| `file_dialog_select` | Complete a standard Windows Open/Save file dialog by entering a path and clicking the accept button. Handles ambiguous "Open" buttons automatically |
 | `send_keys` | Send keyboard shortcuts (e.g., `Ctrl+A`, `Enter`, `Alt+F4`) |
-| `focus_element` | Focus an element / bring window to foreground |
+| `focus_element` | Focus an element / bring window to foreground. Supports `rootAutomationId` |
 
 ### Capture & Wait
 
 | Tool | Description |
 |---|---|
-| `screenshot` | Capture a window or element as base64 PNG (max 1280px wide) |
-| `wait_for_element` | Wait for an element to appear (configurable timeout) |
+| `screenshot` | Capture a window or element as base64 PNG (max 1280px wide). Supports `rootAutomationId` |
+| `wait_for_element` | Wait for an element to appear (configurable timeout). Supports `rootAutomationId` |
 
 ## Example Agent Workflow
 
@@ -142,7 +143,30 @@ Elements can be found using (in priority order):
 
 1. **`automationId`** — Most reliable. Set by developers, unique within a window.
 2. **`xpath`** — Structural path like `//Button[@Name='OK']`. Good when AutomationId is missing.
-3. **`name` + `controlType`** — Display text + type combo. Useful for labeled controls.
+3. **`name` + `controlType`** — Display text + type combo. Useful for labeled controls. When multiple elements match, ranked resolution picks the best candidate using structural context (depth, dialog role, parent type).
+
+### Ranked Resolution & Ambiguity
+
+When a Name + ControlType search matches multiple elements (e.g. in a standard file dialog where several buttons are named "Open"), the resolver scores each candidate:
+
+- **Shallower elements** (closer to the window root) are preferred.
+- **Dialog action buttons** (automationId `"1"` / `"2"`) get a strong bonus.
+- **Dropdown buttons** (automationId `"DropDown"`) and **combo-box children** are penalized.
+- **Enabled, visible** elements score higher.
+
+The best-scoring element is used automatically. When ambiguity exists, tools like `click_element` and `invoke_element` append a diagnostic warning listing all candidates with scores and parent context.
+
+### Subtree-Scoped Searches
+
+Most tools support `rootAutomationId` — an optional parameter that scopes the element search to a subtree instead of the full window. This is useful for targeting elements inside a known container (e.g. clicking a dropdown button specifically within a named combo box).
+
+## File Dialog Handling
+
+Standard Windows Open/Save dialogs expose multiple controls named "Open" — the main accept button, plus dropdown buttons inside the "File name:" and "Files of type:" combo boxes. WinApp-MCP handles this:
+
+- **`file_dialog_select`** — the recommended approach. Enters a file path and clicks the dialog accept button in one operation. Works with both Open and Save dialogs.
+- **Ranked resolution** — if you use `click_element` or `invoke_element` with `name="Open"`, the main dialog button (automationId `"1"`) is automatically preferred over dropdown buttons.
+- **Subtree scoping** — to explicitly target a dropdown button within a specific combo box, use `rootAutomationId` to scope the search.
 
 ## Provider Tolerance
 
@@ -172,6 +196,7 @@ WinApp-MCP is designed to work with real-world UI Automation providers that may 
 | **Screenshot fails** | Ensure the window is not minimized. The server needs a desktop session (not headless). |
 | **DPI/coordinate issues** | Ensure the process is DPI-aware. BoundingRectangle values are in physical pixels. |
 | **Logging to stdout breaks MCP** | All logging routes to stderr by default. Don't add `Console.WriteLine` calls. |
+| **File dialog clicks wrong "Open" button** | Use `file_dialog_select` for standard file dialogs, or use `invoke_element` with `automationId="1"` to target the accept button directly. Ranked resolution now auto-prefers the main dialog button. |
 
 ## Architecture
 
@@ -180,17 +205,18 @@ WinApp-MCP/
 ├── Program.cs                  # Host builder, DI, MCP server setup
 ├── Services/
 │   ├── FlaUIService.cs         # Singleton: UIA3Automation, window cache, tree serialization
-│   ├── ElementResolver.cs     # Element lookup with retry and transient failure recovery
+│   ├── ElementResolver.cs     # Element lookup with ranked resolution and transient failure recovery
 │   └── SafeUIA.cs             # Safe UIA property access and multi-strategy text extraction
 ├── Models/
 │   ├── ElementInfo.cs          # Compact DTO for element properties
 │   ├── ErrorCategory.cs       # Error classification enum
+│   ├── ResolveResult.cs       # Ranked resolution result with ambiguity diagnostics
 │   ├── RowAction.cs           # Row-level action metadata for list items
 │   └── ToolResult.cs          # Structured tool result with error categorization
 └── Tools/
     ├── WindowTools.cs          # list_windows, attach_application, list_attached
     ├── InspectionTools.cs      # get_window_tree, find_elements, get_element_properties, get_selectable_items, get_child_controls
-    ├── InteractionTools.cs     # click, invoke, type_text, toggle, select, send_keys, focus
+    ├── InteractionTools.cs     # click, invoke, type_text, toggle, select, file_dialog_select, send_keys, focus
     ├── TextTools.cs            # get_visible_text, get_element_text, set_text
     ├── CaptureTools.cs         # screenshot
     └── WaitTools.cs            # wait_for_element

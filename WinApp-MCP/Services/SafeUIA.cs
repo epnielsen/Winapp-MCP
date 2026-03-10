@@ -76,6 +76,18 @@ public static class SafeUIA
     }
 
     /// <summary>
+    /// Safely retrieve the parent element. Returns null if unavailable.
+    /// </summary>
+    public static AutomationElement? SafeGetParent(AutomationElement element)
+    {
+        try
+        {
+            return element.Parent;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
     /// Try to extract text from an element using a multi-strategy fallback chain.
     /// Returns the text and which source provided it.
     /// </summary>

@@ -127,7 +127,8 @@ public static class TextTools
     [McpServerTool(Name = "get_element_text"), Description(
         "Read the text or current value from a specific UI element. " +
         "Uses a multi-strategy fallback: ValuePattern, TextPattern, Name property, " +
-        "LegacyIAccessible, and visible text descendants. Reports which source provided the text.")]
+        "LegacyIAccessible, and visible text descendants. Reports which source provided the text. " +
+        "Use rootAutomationId to scope the search to a subtree.")]
     public static string GetElementText(
         FlaUIService flaUI,
         ElementResolver resolver,
@@ -135,14 +136,24 @@ public static class TextTools
         [Description("AutomationId of the element")] string? automationId = null,
         [Description("Name/text of the element")] string? name = null,
         [Description("Control type filter")] string? controlType = null,
-        [Description("XPath expression")] string? xpath = null)
+        [Description("XPath expression")] string? xpath = null,
+        [Description("Optional AutomationId of subtree root to scope the search")] string? rootAutomationId = null)
     {
         return Task.Run(() =>
         {
             try
             {
                 var window = flaUI.GetCachedWindow(windowHandle);
-                var element = resolver.FindElement(window, automationId, name, controlType, xpath);
+                AutomationElement searchRoot = window;
+                if (!string.IsNullOrWhiteSpace(rootAutomationId))
+                {
+                    var root = resolver.FindElement(window, automationId: rootAutomationId);
+                    if (root == null)
+                        return $"Error: Could not find subtree root with AutomationId='{rootAutomationId}'.";
+                    searchRoot = root;
+                }
+
+                var element = resolver.FindElement(searchRoot, automationId, name, controlType, xpath);
 
                 if (element == null)
                     return $"Error: Element not found. {ElementResolver.DescribeSearch(automationId, name, controlType, xpath)}";
@@ -165,7 +176,8 @@ public static class TextTools
     [McpServerTool(Name = "set_text"), Description(
         "Set text in a text-capable UI element. Uses ValuePattern.SetValue() by default (most reliable). " +
         "Set allowKeyboardFallback=true to enable keyboard simulation as a last resort. " +
-        "Reports which method was used to set the text.")]
+        "Reports which method was used to set the text. " +
+        "Use rootAutomationId to scope the search to a subtree.")]
     public static string SetText(
         FlaUIService flaUI,
         ElementResolver resolver,
@@ -176,14 +188,24 @@ public static class TextTools
         [Description("Control type filter")] string? controlType = null,
         [Description("XPath expression")] string? xpath = null,
         [Description("Clear existing text before setting (default true)")] bool clearFirst = true,
-        [Description("Allow keyboard simulation as a fallback if patterns unavailable (default false)")] bool allowKeyboardFallback = false)
+        [Description("Allow keyboard simulation as a fallback if patterns unavailable (default false)")] bool allowKeyboardFallback = false,
+        [Description("Optional AutomationId of subtree root to scope the search")] string? rootAutomationId = null)
     {
         return Task.Run(() =>
         {
             try
             {
                 var window = flaUI.GetCachedWindow(windowHandle);
-                var element = resolver.FindElement(window, automationId, name, controlType, xpath);
+                AutomationElement searchRoot = window;
+                if (!string.IsNullOrWhiteSpace(rootAutomationId))
+                {
+                    var root = resolver.FindElement(window, automationId: rootAutomationId);
+                    if (root == null)
+                        return $"Error: Could not find subtree root with AutomationId='{rootAutomationId}'.";
+                    searchRoot = root;
+                }
+
+                var element = resolver.FindElement(searchRoot, automationId, name, controlType, xpath);
 
                 if (element == null)
                     return $"Error: Element not found. {ElementResolver.DescribeSearch(automationId, name, controlType, xpath)}";

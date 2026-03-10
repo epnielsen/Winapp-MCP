@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-03-09
+
+### Added
+
+- **`file_dialog_select`** tool — complete a standard Windows Open/Save file dialog by entering a file path and clicking the accept button. Handles the common ambiguity where multiple controls share the name "Open" by targeting the dialog action button (automationId `"1"`). Supports custom accept button names for Save dialogs and non-standard variants.
+- **Ranked element resolution** — when multiple elements match a Name + ControlType search, candidates are scored by structural context (depth, dialog role, parent type). Dialog action buttons (automationId `"1"`, `"2"`) are preferred over identically-named combo-box dropdown buttons.
+- **Ambiguity diagnostics** — `click_element` and `invoke_element` now report a structured warning when multiple elements matched, listing all candidates with scores, depths, and parent context so agents can refine selectors or accept the recommended match.
+- **`rootAutomationId`** parameter on `click_element`, `invoke_element`, `type_text`, `toggle_element`, `focus_element`, `select_item`, `wait_for_element`, `screenshot`, `get_element_text`, and `set_text` — scope element searches to a subtree, matching existing behavior on inspection and text-reading tools.
+- **`SafeUIA.SafeGetParent()`** — safe wrapper for parent element access, used by the ranking engine.
+- **`ResolveResult`** model — result of ranked element resolution, containing the best match plus all candidates for diagnostics.
+- **`ScoredMatch`** model — element match with computed ranking score and structural context (depth, parent description).
+
+### Changed
+
+- **`ElementResolver.FindElement()`** now uses ranked resolution for Name + ControlType searches. When multiple candidates exist, the highest-scoring element is returned automatically. AutomationId and XPath searches are unchanged.
+- **`ElementResolver`** gains `ResolveElement()` method returning `ResolveResult` with full ambiguity information, and internal `ScoreElement()` / `GetDepth()` / `RetryFindAll()` helpers for the ranking engine.
+
 ## [0.3.0] - 2026-03-09
 
 ### Added

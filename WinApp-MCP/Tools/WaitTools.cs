@@ -15,7 +15,8 @@ public static class WaitTools
     [McpServerTool(Name = "wait_for_element"), Description(
         "Wait for a UI element to appear in the window. " +
         "Useful after navigating or triggering operations that load new UI. " +
-        "Returns element info on success, or a timeout error.")]
+        "Returns element info on success, or a timeout error. " +
+        "Use rootAutomationId to scope the search to a subtree.")]
     public static string WaitForElement(
         FlaUIService flaUI,
         ElementResolver resolver,
@@ -24,7 +25,8 @@ public static class WaitTools
         [Description("Name/text of the element to wait for")] string? name = null,
         [Description("Control type filter")] string? controlType = null,
         [Description("XPath expression")] string? xpath = null,
-        [Description("Maximum time to wait in milliseconds (default 5000, max 30000)")] int timeoutMs = 5000)
+        [Description("Maximum time to wait in milliseconds (default 5000, max 30000)")] int timeoutMs = 5000,
+        [Description("Optional AutomationId of subtree root to scope the search")] string? rootAutomationId = null)
     {
         return Task.Run(() =>
         {
@@ -38,6 +40,15 @@ public static class WaitTools
                 }
 
                 var window = flaUI.GetCachedWindow(windowHandle);
+                FlaUI.Core.AutomationElements.AutomationElement searchRoot = window;
+                if (!string.IsNullOrWhiteSpace(rootAutomationId))
+                {
+                    var root = resolver.FindElement(window, automationId: rootAutomationId);
+                    if (root == null)
+                        return $"Error: Could not find subtree root with AutomationId='{rootAutomationId}'.";
+                    searchRoot = root;
+                }
+
                 timeoutMs = Math.Clamp(timeoutMs, 500, 30000);
 
                 var search = ElementResolver.DescribeSearch(automationId, name, controlType, xpath);
@@ -47,7 +58,7 @@ public static class WaitTools
                 var result = Retry.WhileNull(
                     () =>
                     {
-                        found = resolver.FindElement(window, automationId, name, controlType, xpath);
+                        found = resolver.FindElement(searchRoot, automationId, name, controlType, xpath);
                         return found;
                     },
                     timeout: TimeSpan.FromMilliseconds(timeoutMs),

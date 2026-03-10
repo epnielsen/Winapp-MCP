@@ -17,7 +17,8 @@ public static class InteractionTools
 {
     [McpServerTool(Name = "click_element"), Description(
         "Click on a UI element. Brings the window to the foreground first. " +
-        "Use clickType to specify left, right, or double click.")]
+        "Use clickType to specify left, right, or double click. " +
+        "Use rootAutomationId to scope the search to a subtree.")]
     public static string ClickElement(
         FlaUIService flaUI,
         ElementResolver resolver,
@@ -26,17 +27,29 @@ public static class InteractionTools
         [Description("Name/text of the element")] string? name = null,
         [Description("Control type: Button, TextBox, CheckBox, etc.")] string? controlType = null,
         [Description("XPath expression")] string? xpath = null,
-        [Description("Click type: left (default), right, or double")] string clickType = "left")
+        [Description("Click type: left (default), right, or double")] string clickType = "left",
+        [Description("Optional AutomationId of subtree root to scope the search")] string? rootAutomationId = null)
     {
         return Task.Run(() =>
         {
             try
             {
                 var window = flaUI.GetCachedWindow(windowHandle);
-                var element = resolver.FindElement(window, automationId, name, controlType, xpath);
+                AutomationElement searchRoot = window;
+                if (!string.IsNullOrWhiteSpace(rootAutomationId))
+                {
+                    var root = resolver.FindElement(window, automationId: rootAutomationId);
+                    if (root == null)
+                        return $"Error: Could not find subtree root with AutomationId='{rootAutomationId}'.";
+                    searchRoot = root;
+                }
 
-                if (element == null)
+                var resolved = resolver.ResolveElement(searchRoot, automationId, name, controlType, xpath);
+
+                if (resolved.Element == null)
                     return $"Error: Element not found. {ElementResolver.DescribeSearch(automationId, name, controlType, xpath)}";
+
+                var element = resolved.Element;
 
                 // Bring window to foreground
                 window.SetForeground();
@@ -58,7 +71,10 @@ public static class InteractionTools
                 Wait.UntilInputIsProcessed();
 
                 var info = ElementInfo.FromElement(element);
-                return $"Clicked ({clickType}) on: {info.ToCompactString()}";
+                var result = $"Clicked ({clickType}) on: {info.ToCompactString()}";
+                if (resolved.IsAmbiguous)
+                    result += resolved.FormatAmbiguityWarning();
+                return result;
             }
             catch (Exception ex)
             {
@@ -70,7 +86,8 @@ public static class InteractionTools
     [McpServerTool(Name = "invoke_element"), Description(
         "Invoke a button or clickable element using the UIA Invoke pattern (no mouse movement). " +
         "Preferred over click_element for buttons as it is more reliable. " +
-        "Falls back to Click() if InvokePattern is not supported.")]
+        "Falls back to Click() if InvokePattern is not supported. " +
+        "Use rootAutomationId to scope the search to a subtree.")]
     public static string InvokeElement(
         FlaUIService flaUI,
         ElementResolver resolver,
@@ -78,31 +95,44 @@ public static class InteractionTools
         [Description("AutomationId of the element")] string? automationId = null,
         [Description("Name/text of the element")] string? name = null,
         [Description("Control type: Button, MenuItem, etc.")] string? controlType = null,
-        [Description("XPath expression")] string? xpath = null)
+        [Description("XPath expression")] string? xpath = null,
+        [Description("Optional AutomationId of subtree root to scope the search")] string? rootAutomationId = null)
     {
         return Task.Run(() =>
         {
             try
             {
                 var window = flaUI.GetCachedWindow(windowHandle);
-                var element = resolver.FindElement(window, automationId, name, controlType, xpath);
+                AutomationElement searchRoot = window;
+                if (!string.IsNullOrWhiteSpace(rootAutomationId))
+                {
+                    var root = resolver.FindElement(window, automationId: rootAutomationId);
+                    if (root == null)
+                        return $"Error: Could not find subtree root with AutomationId='{rootAutomationId}'.";
+                    searchRoot = root;
+                }
 
-                if (element == null)
+                var resolved = resolver.ResolveElement(searchRoot, automationId, name, controlType, xpath);
+
+                if (resolved.Element == null)
                     return $"Error: Element not found. {ElementResolver.DescribeSearch(automationId, name, controlType, xpath)}";
+
+                var element = resolved.Element;
+                var ambiguityWarning = resolved.IsAmbiguous ? resolved.FormatAmbiguityWarning() : "";
 
                 // Try InvokePattern first
                 if (element.Patterns.Invoke.IsSupported)
                 {
                     element.Patterns.Invoke.Pattern.Invoke();
                     Wait.UntilInputIsProcessed();
-                    return $"Invoked: {ElementInfo.FromElement(element).ToCompactString()}";
+                    return $"Invoked: {ElementInfo.FromElement(element).ToCompactString()}{ambiguityWarning}";
                 }
 
                 // Fallback to click
                 window.SetForeground();
                 element.Click();
                 Wait.UntilInputIsProcessed();
-                return $"Clicked (InvokePattern not supported, used Click fallback): {ElementInfo.FromElement(element).ToCompactString()}";
+                return $"Clicked (InvokePattern not supported, used Click fallback): {ElementInfo.FromElement(element).ToCompactString()}{ambiguityWarning}";
             }
             catch (Exception ex)
             {
@@ -114,7 +144,8 @@ public static class InteractionTools
     [McpServerTool(Name = "type_text"), Description(
         "Type text into an input element (TextBox, Edit, etc.). " +
         "By default clears existing text first. " +
-        "Uses ValuePattern.SetValue() if available, otherwise falls back to keyboard simulation.")]
+        "Uses ValuePattern.SetValue() if available, otherwise falls back to keyboard simulation. " +
+        "Use rootAutomationId to scope the search to a subtree.")]
     public static string TypeText(
         FlaUIService flaUI,
         ElementResolver resolver,
@@ -124,14 +155,24 @@ public static class InteractionTools
         [Description("Name/text of the element")] string? name = null,
         [Description("Control type filter")] string? controlType = null,
         [Description("XPath expression")] string? xpath = null,
-        [Description("Clear existing text before typing (default true)")] bool clearFirst = true)
+        [Description("Clear existing text before typing (default true)")] bool clearFirst = true,
+        [Description("Optional AutomationId of subtree root to scope the search")] string? rootAutomationId = null)
     {
         return Task.Run(() =>
         {
             try
             {
                 var window = flaUI.GetCachedWindow(windowHandle);
-                var element = resolver.FindElement(window, automationId, name, controlType, xpath);
+                AutomationElement searchRoot = window;
+                if (!string.IsNullOrWhiteSpace(rootAutomationId))
+                {
+                    var root = resolver.FindElement(window, automationId: rootAutomationId);
+                    if (root == null)
+                        return $"Error: Could not find subtree root with AutomationId='{rootAutomationId}'.";
+                    searchRoot = root;
+                }
+
+                var element = resolver.FindElement(searchRoot, automationId, name, controlType, xpath);
 
                 if (element == null)
                     return $"Error: Element not found. {ElementResolver.DescribeSearch(automationId, name, controlType, xpath)}";
@@ -180,7 +221,8 @@ public static class InteractionTools
     }
 
     [McpServerTool(Name = "toggle_element"), Description(
-        "Toggle a CheckBox or ToggleButton. Returns the new checked state.")]
+        "Toggle a CheckBox or ToggleButton. Returns the new checked state. " +
+        "Use rootAutomationId to scope the search to a subtree.")]
     public static string ToggleElement(
         FlaUIService flaUI,
         ElementResolver resolver,
@@ -188,14 +230,24 @@ public static class InteractionTools
         [Description("AutomationId of the element")] string? automationId = null,
         [Description("Name/text of the element")] string? name = null,
         [Description("Control type filter")] string? controlType = null,
-        [Description("XPath expression")] string? xpath = null)
+        [Description("XPath expression")] string? xpath = null,
+        [Description("Optional AutomationId of subtree root to scope the search")] string? rootAutomationId = null)
     {
         return Task.Run(() =>
         {
             try
             {
                 var window = flaUI.GetCachedWindow(windowHandle);
-                var element = resolver.FindElement(window, automationId, name, controlType, xpath);
+                AutomationElement searchRoot = window;
+                if (!string.IsNullOrWhiteSpace(rootAutomationId))
+                {
+                    var root = resolver.FindElement(window, automationId: rootAutomationId);
+                    if (root == null)
+                        return $"Error: Could not find subtree root with AutomationId='{rootAutomationId}'.";
+                    searchRoot = root;
+                }
+
+                var element = resolver.FindElement(searchRoot, automationId, name, controlType, xpath);
 
                 if (element == null)
                     return $"Error: Element not found. {ElementResolver.DescribeSearch(automationId, name, controlType, xpath)}";
@@ -218,7 +270,8 @@ public static class InteractionTools
 
     [McpServerTool(Name = "select_item"), Description(
         "Select an item in a ComboBox or ListBox by text value or index. " +
-        "Uses a multi-strategy fallback chain for value matching when provider does not expose Name.")]
+        "Uses a multi-strategy fallback chain for value matching when provider does not expose Name. " +
+        "Use rootAutomationId to scope the search to a subtree.")]
     public static string SelectItem(
         FlaUIService flaUI,
         ElementResolver resolver,
@@ -228,7 +281,8 @@ public static class InteractionTools
         [Description("Control type filter")] string? controlType = null,
         [Description("XPath expression")] string? xpath = null,
         [Description("Text value of the item to select")] string? value = null,
-        [Description("Zero-based index of the item to select")] int? index = null)
+        [Description("Zero-based index of the item to select")] int? index = null,
+        [Description("Optional AutomationId of subtree root to scope the search")] string? rootAutomationId = null)
     {
         return Task.Run(() =>
         {
@@ -238,7 +292,16 @@ public static class InteractionTools
                     return "Error: Provide either 'value' or 'index' to select an item.";
 
                 var window = flaUI.GetCachedWindow(windowHandle);
-                var element = resolver.FindElement(window, automationId, name, controlType, xpath);
+                AutomationElement searchRoot = window;
+                if (!string.IsNullOrWhiteSpace(rootAutomationId))
+                {
+                    var root = resolver.FindElement(window, automationId: rootAutomationId);
+                    if (root == null)
+                        return $"Error: Could not find subtree root with AutomationId='{rootAutomationId}'.";
+                    searchRoot = root;
+                }
+
+                var element = resolver.FindElement(searchRoot, automationId, name, controlType, xpath);
 
                 if (element == null)
                     return $"Error: Element not found. {ElementResolver.DescribeSearch(automationId, name, controlType, xpath)}";
@@ -426,6 +489,141 @@ public static class InteractionTools
         return parts.Count > 0 ? $" ({string.Join(", ", parts)})" : "";
     }
 
+    [McpServerTool(Name = "file_dialog_select"), Description(
+        "Complete a standard Windows Open/Save file dialog by entering a file path and clicking the accept button. " +
+        "Works with standard Windows file dialogs that have a 'File name:' ComboBox and an accept button (Open, Save, etc.). " +
+        "Handles the common ambiguity where multiple buttons share the name 'Open' by targeting the dialog action button.")]
+    public static string FileDialogSelect(
+        FlaUIService flaUI,
+        ElementResolver resolver,
+        [Description("Window handle of the file dialog from attach_application")] string windowHandle,
+        [Description("Full file path to enter in the File name field")] string filePath,
+        [Description("Name of the accept button (default 'Open'). Use 'Save' for Save dialogs.")] string acceptButtonName = "Open")
+    {
+        return Task.Run(() =>
+        {
+            try
+            {
+                var window = flaUI.GetCachedWindow(windowHandle);
+                window.SetForeground();
+                Wait.UntilInputIsProcessed();
+
+                // Step 1: Find the File name edit field
+                // Standard file dialog: ComboBox "File name:" with automationId "1148", containing an Edit child
+                AutomationElement? fileNameEdit = null;
+                string editMethod = "";
+
+                // Strategy 1: Find Edit child inside the "File name:" ComboBox by automationId
+                var fileNameCombo = resolver.FindElement(window, automationId: "1148");
+                if (fileNameCombo != null)
+                {
+                    try
+                    {
+                        var edits = fileNameCombo.FindAllChildren(cf => cf.ByControlType(ControlType.Edit));
+                        if (edits.Length > 0)
+                        {
+                            fileNameEdit = edits[0];
+                            editMethod = "ComboBox(id=1148)/Edit";
+                        }
+                    }
+                    catch { /* fall through */ }
+                }
+
+                // Strategy 2: Fallback — find the ComboBox by name "File name:"
+                if (fileNameEdit == null)
+                {
+                    fileNameCombo = resolver.FindElement(window, name: "File name:", controlType: "ComboBox");
+                    if (fileNameCombo != null)
+                    {
+                        try
+                        {
+                            var edits = fileNameCombo.FindAllChildren(cf => cf.ByControlType(ControlType.Edit));
+                            if (edits.Length > 0)
+                            {
+                                fileNameEdit = edits[0];
+                                editMethod = "ComboBox('File name:')/Edit";
+                            }
+                        }
+                        catch { /* fall through */ }
+                    }
+                }
+
+                // Strategy 3: Find any Edit with automationId "1148" directly
+                if (fileNameEdit == null)
+                {
+                    fileNameEdit = resolver.FindElement(window, automationId: "1148", controlType: "Edit");
+                    if (fileNameEdit != null)
+                        editMethod = "Edit(id=1148)";
+                }
+
+                if (fileNameEdit == null)
+                    return "Error: Could not find the File name edit field. This may not be a standard Windows file dialog.";
+
+                // Step 2: Set the file path
+                if (fileNameEdit.Patterns.Value.IsSupported)
+                {
+                    fileNameEdit.Patterns.Value.Pattern.SetValue(filePath);
+                }
+                else
+                {
+                    // Fallback: focus and type
+                    fileNameEdit.Focus();
+                    Wait.UntilInputIsProcessed();
+                    Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_A);
+                    Keyboard.Type(VirtualKeyShort.DELETE);
+                    Wait.UntilInputIsProcessed();
+                    Keyboard.Type(filePath);
+                }
+                Wait.UntilInputIsProcessed();
+
+                // Step 3: Find and click the accept button
+                // Standard dialog accept button has automationId "1"
+                AutomationElement? acceptButton = null;
+                string buttonMethod = "";
+
+                // Strategy 1: By automationId "1" (most reliable for standard dialogs)
+                var candidate = resolver.FindElement(window, automationId: "1");
+                if (candidate != null && SafeUIA.SafeGetControlType(candidate) == "Button")
+                {
+                    acceptButton = candidate;
+                    buttonMethod = "Button(id=1)";
+                }
+
+                // Strategy 2: Use ranked resolution by name (handles ambiguity)
+                if (acceptButton == null)
+                {
+                    var resolved = resolver.ResolveElement(window, name: acceptButtonName, controlType: "Button");
+                    if (resolved.Element != null)
+                    {
+                        acceptButton = resolved.Element;
+                        buttonMethod = resolved.IsAmbiguous ? $"ranked({acceptButtonName})" : $"Button('{acceptButtonName}')";
+                    }
+                }
+
+                if (acceptButton == null)
+                    return $"Error: Could not find the accept button ('{acceptButtonName}'). File path was entered via {editMethod}.";
+
+                // Invoke the accept button
+                if (acceptButton.Patterns.Invoke.IsSupported)
+                {
+                    acceptButton.Patterns.Invoke.Pattern.Invoke();
+                }
+                else
+                {
+                    acceptButton.Click();
+                }
+                Wait.UntilInputIsProcessed();
+
+                return $"File dialog completed. Path='{filePath}', editMethod={editMethod}, buttonMethod={buttonMethod}.";
+            }
+            catch (Exception ex)
+            {
+                var category = ToolResult.Classify(ex);
+                return $"Error [{category}]: {ex.Message}";
+            }
+        }).Result;
+    }
+
     [McpServerTool(Name = "send_keys"), Description(
         "Send keyboard shortcuts or key presses to the focused window. " +
         "Supports modifiers: Ctrl+A, Alt+F4, Shift+Tab, Ctrl+Shift+S, etc. " +
@@ -483,7 +681,8 @@ public static class InteractionTools
     }
 
     [McpServerTool(Name = "focus_element"), Description(
-        "Set focus to a specific element and bring the window to the foreground.")]
+        "Set focus to a specific element and bring the window to the foreground. " +
+        "Use rootAutomationId to scope the search to a subtree.")]
     public static string FocusElement(
         FlaUIService flaUI,
         ElementResolver resolver,
@@ -491,7 +690,8 @@ public static class InteractionTools
         [Description("AutomationId of the element")] string? automationId = null,
         [Description("Name/text of the element")] string? name = null,
         [Description("Control type filter")] string? controlType = null,
-        [Description("XPath expression")] string? xpath = null)
+        [Description("XPath expression")] string? xpath = null,
+        [Description("Optional AutomationId of subtree root to scope the search")] string? rootAutomationId = null)
     {
         return Task.Run(() =>
         {
@@ -500,13 +700,22 @@ public static class InteractionTools
                 var window = flaUI.GetCachedWindow(windowHandle);
                 window.SetForeground();
 
-                if (automationId == null && name == null && controlType == null && xpath == null)
+                if (automationId == null && name == null && controlType == null && xpath == null && rootAutomationId == null)
                 {
                     Wait.UntilInputIsProcessed();
                     return $"Brought window to foreground: {window.Name}";
                 }
 
-                var element = resolver.FindElement(window, automationId, name, controlType, xpath);
+                AutomationElement searchRoot = window;
+                if (!string.IsNullOrWhiteSpace(rootAutomationId))
+                {
+                    var root = resolver.FindElement(window, automationId: rootAutomationId);
+                    if (root == null)
+                        return $"Error: Could not find subtree root with AutomationId='{rootAutomationId}'.";
+                    searchRoot = root;
+                }
+
+                var element = resolver.FindElement(searchRoot, automationId, name, controlType, xpath);
                 if (element == null)
                     return $"Error: Element not found. {ElementResolver.DescribeSearch(automationId, name, controlType, xpath)}";
 

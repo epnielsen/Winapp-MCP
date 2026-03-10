@@ -20,7 +20,8 @@ public static class CaptureTools
     [McpServerTool(Name = "screenshot"), Description(
         "Capture a screenshot of a window or a specific element within it. " +
         "Returns the image as base64 PNG. If no element identifiers are provided, " +
-        "captures the entire window. Images are resized to max 1280px width.")]
+        "captures the entire window. Images are resized to max 1280px width. " +
+        "Use rootAutomationId to scope the element search to a subtree.")]
     public static string Screenshot(
         FlaUIService flaUI,
         ElementResolver resolver,
@@ -28,7 +29,8 @@ public static class CaptureTools
         [Description("AutomationId of a specific element to capture")] string? automationId = null,
         [Description("Name of a specific element to capture")] string? name = null,
         [Description("Control type filter")] string? controlType = null,
-        [Description("XPath expression for element to capture")] string? xpath = null)
+        [Description("XPath expression for element to capture")] string? xpath = null,
+        [Description("Optional AutomationId of subtree root to scope the search")] string? rootAutomationId = null)
     {
         return Task.Run(() =>
         {
@@ -50,7 +52,16 @@ public static class CaptureTools
 
                 if (hasElementSearch)
                 {
-                    var element = resolver.FindElement(window, automationId, name, controlType, xpath);
+                    FlaUI.Core.AutomationElements.AutomationElement searchRoot = window;
+                    if (!string.IsNullOrWhiteSpace(rootAutomationId))
+                    {
+                        var root = resolver.FindElement(window, automationId: rootAutomationId);
+                        if (root == null)
+                            return $"Error: Could not find subtree root with AutomationId='{rootAutomationId}'.";
+                        searchRoot = root;
+                    }
+
+                    var element = resolver.FindElement(searchRoot, automationId, name, controlType, xpath);
                     if (element == null)
                         return $"Error: Element not found. {ElementResolver.DescribeSearch(automationId, name, controlType, xpath)}";
 
